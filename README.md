@@ -1,15 +1,18 @@
 # I2P-node
 
-A small bootstrap installer for running a Java I2P router on a Debian VPS, with an optional-ready local website origin for an I2P Eepsite.
+A small bootstrap installer for running a Java I2P router on Debian or Ubuntu VPS instances, with a local website origin for an I2P Eepsite.
 
-## Supported system
+## Supported systems
 
 - Debian 12 (Bookworm)
 - Debian 13 (Trixie)
+- Ubuntu 22.04 LTS (Jammy)
+- Ubuntu 24.04 LTS (Noble)
+- Ubuntu 26.04 LTS (Resolute)
 - systemd
 - Root or sudo access
 
-Other distributions are intentionally rejected for now.
+Other distributions and releases are intentionally rejected for now.
 
 ## Install
 
@@ -26,12 +29,13 @@ sudo bash install.sh
 The installer asks for confirmation, then:
 
 1. Installs prerequisite packages.
-2. Downloads the official I2P APT signing key and checks its full fingerprint.
-3. Adds the official `deb.i2p.net` repository.
-4. Installs Java I2P and `i2p-keyring`.
-5. Enables and starts `i2p.service` when the package provides that unit.
-6. Installs Nginx and prepares a sample website at `/var/www/i2p-site`.
-7. Binds the website origin only to `127.0.0.1:8080`.
+2. Detects Debian or Ubuntu and selects the official I2P package source.
+3. On Debian, downloads the official I2P APT signing key, verifies its full fingerprint, and adds `deb.i2p.net`.
+4. On Ubuntu, adds the official `ppa:i2p-maintainers/i2p` PPA.
+5. Installs Java I2P (and `i2p-keyring` on Debian).
+6. Enables and starts the I2P system service when the package provides that unit.
+7. Installs Nginx and prepares a sample website at `/var/www/i2p-site`.
+8. Binds the website origin only to `127.0.0.1:8080`.
 
 The installer does **not** change firewall rules, expose the Router Console, or force the router to become Floodfill.
 
