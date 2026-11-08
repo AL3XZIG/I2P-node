@@ -167,6 +167,16 @@ fi
 backup_path "/etc/nginx/sites-enabled/default"
 backup_path "/etc/nginx/sites-available/default"
 
+if [[ -e /etc/nginx/sites-enabled/default || -L /etc/nginx/sites-enabled/default ]]; then
+  warn "The Nginx default site is enabled and will be disabled."
+  warn "Its configuration and symlink have been backed up under: $BACKUP_DIR/etc/nginx/"
+  read -r -p "Disable /etc/nginx/sites-enabled/default? [y/N] " disable_default
+  [[ "$disable_default" =~ ^[Yy]([Ee][Ss])?$ ]] || die "Refusing to disable the Nginx default site. Review changes and backup at $BACKUP_DIR."
+  rm -f /etc/nginx/sites-enabled/default
+else
+  log "Nginx default site is already disabled or absent."
+fi
+
 # Back up our target vhost explicitly before replacing it.
 backup_path "$NGINX_SITE"
 
@@ -187,16 +197,6 @@ server {
 NGINX
 
 ln -sfn "$NGINX_SITE" /etc/nginx/sites-enabled/i2p-site
-
-if [[ -e /etc/nginx/sites-enabled/default || -L /etc/nginx/sites-enabled/default ]]; then
-  warn "The Nginx default site is enabled and will be disabled."
-  warn "Its configuration and symlink have been backed up under: $BACKUP_DIR/etc/nginx/"
-  read -r -p "Disable /etc/nginx/sites-enabled/default? [y/N] " disable_default
-  [[ "$disable_default" =~ ^[Yy]([Ee][Ss])?$ ]] || die "Refusing to disable the Nginx default site. Review changes and backup at $BACKUP_DIR."
-  rm -f /etc/nginx/sites-enabled/default
-else
-  log "Nginx default site is already disabled or absent."
-fi
 
 nginx -t
 systemctl enable --now nginx
