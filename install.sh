@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# I2P-node bootstrap installer for Debian 12/13.
-# Installs official Java I2P, systemd service, and an optional-ready local
-# Nginx origin for an I2P Eepsite. It does NOT expose Router Console or
-# open firewall ports automatically.
+# I2P-node bootstrap installer for Debian 12/13 and Ubuntu 22.04/24.04/26.04.
+# Installs official Java I2P, systemd service, and a local Nginx origin for an Eepsite.
+# It does NOT expose Router Console or open firewall ports automatically.
 
 readonly KEY_URL="https://i2p.net/i2p-archive-keyring.gpg"
 readonly KEY_FINGERPRINT="7840E7610F28B904753549D767ECE5605BCF1346"
 readonly REPO_URL="https://deb.i2p.net"
+readonly UBUNTU_PPA="ppa:i2p-maintainers/i2p"
 readonly KEYRING="/usr/share/keyrings/i2p-archive-keyring.gpg"
 readonly REPO_FILE="/etc/apt/sources.list.d/i2p.list"
 readonly SITE_ROOT="/var/www/i2p-site"
@@ -24,47 +24,78 @@ trap 'rc=$?; warn "Installation stopped (exit code: $rc). See the message above.
 [[ -r /etc/os-release ]] || die "Cannot identify operating system."
 
 . /etc/os-release
-[[ "${ID:-}" == "debian" ]] || die "This installer currently supports Debian 12/13 only."
-case "${VERSION_ID:-}" in
-  12|13) ;;
-  *) die "Unsupported Debian version: ${VERSION_ID:-unknown}. Use Debian 12 or 13." ;;
+
+case "${ID:-}" in
+  debian)
+    case "${VERSION_ID:-}" in
+      12|13) DISTRO_FAMILY="debian" ;;
+      *) die "Unsupported Debian version: ${VERSION_ID:-unknown}. Use Debian 12 or 13." ;;
+    esac
+    ;;
+  ubuntu)
+    case "${VERSION_ID:-}" in
+      22.04|24.04|26.04) DISTRO_FAMILY="ubuntu" ;;
+      *) die "Unsupported Ubuntu version: ${VERSION_ID:-unknown}. Use Ubuntu 22.04, 24.04, or 26.04 LTS." ;;
+    esac
+    ;;
+  *)
+    die "Unsupported distribution: ${ID:-unknown}. Supported: Debian 12/13 and Ubuntu 22.04/24.04/26.04."
+    ;;
 esac
 
 command -v systemctl >/dev/null 2>&1 || die "systemd is required."
 command -v apt-get >/dev/null 2>&1 || die "APT is required."
 
 echo "I2P-node installer"
-echo "OS: Debian ${VERSION_ID} (${VERSION_CODENAME:-unknown})"
+echo "OS: ${PRETTY_NAME:-${ID} ${VERSION_ID}}"
+if [[ "$DISTRO_FAMILY" == "debian" ]]; then
+  echo "I2P source: official deb.i2p.net repository"
+else
+  echo "I2P source: official Ubuntu PPA ($UBUNTU_PPA)"
+fi
 echo "Will install: official Java I2P, Nginx, and a local Eepsite web root."
 echo "Will NOT: open public firewall ports, expose Router Console, or force Floodfill."
 echo
 read -r -p "Continue? [y/N] " answer
-[[ "${answer}" =~ ^[Yy]([Ee][Ss])?$ ]] || { echo "Cancelled."; exit 0; }
+[[ "$answer" =~ ^[Yy]([Ee][Ss])?$ ]] || { echo "Cancelled."; exit 0; }
 
 export DEBIAN_FRONTEND=noninteractive
 
 log "Installing prerequisites..."
 apt-get update
-apt-get install -y --no-install-recommends ca-certificates curl gnupg nginx
+if [[ "$DISTRO_FAMILY" == "ubuntu" ]]; then
+  apt-get install -y --no-install-recommends ca-certificates curl gnupg nginx software-properties-common
+else
+  apt-get install -y --no-install-recommends ca-certificates curl gnupg nginx
+fi
 
-log "Downloading and verifying the official I2P repository key..."
-tmp_key="$(mktemp)"
-trap 'rm -f "${tmp_key:-}"' EXIT
-curl --fail --silent --show-error --location "$KEY_URL" -o "$tmp_key"
+if [[ "$DISTRO_FAMILY" == "debian" ]]; then
+  log "Downloading and verifying the official I2P repository key..."
+  tmp_key="$(mktemp)"
+  trap 'rm -f "${tmp_key:-}"; rc=$?; if [[ $rc -ne 0 ]]; then warn "Installation stopped (exit code: $rc). See the message above."; fi; exit "$rc"' EXIT
+  curl --fail --silent --show-error --location "$KEY_URL" -o "$tmp_key"
 
-actual_fingerprint="$(gpg --batch --show-keys --with-colons "$tmp_key" | awk -F: '$1 == "fpr" {print toupper($10); exit}')"
-[[ "$actual_fingerprint" == "$KEY_FINGERPRINT" ]] || die "I2P signing-key fingerprint mismatch. Expected $KEY_FINGERPRINT, got ${actual_fingerprint:-none}. Refusing to continue."
+  actual_fingerprint="$(gpg --batch --show-keys --with-colons "$tmp_key" | awk -F: '$1 == "fpr" {print toupper($10); exit}')"
+  [[ "$actual_fingerprint" == "$KEY_FINGERPRINT" ]] || die "I2P signing-key fingerprint mismatch. Expected $KEY_FINGERPRINT, got ${actual_fingerprint:-none}. Refusing to continue."
 
-install -o root -g root -m 0644 "$tmp_key" "$KEYRING"
-rm -f "$tmp_key"
-trap - EXIT
+  install -o root -g root -m 0644 "$tmp_key" "$KEYRING"
+  rm -f "$tmp_key"
+  trap - EXIT
 
-log "Adding the official I2P APT repository..."
-printf 'deb [signed-by=%s] %s %s main\n' "$KEYRING" "$REPO_URL" "$VERSION_CODENAME" > "$REPO_FILE"
+  log "Adding the official I2P APT repository..."
+  printf 'deb [signed-by=%s] %s %s main\n' "$KEYRING" "$REPO_URL" "$VERSION_CODENAME" > "$REPO_FILE"
 
-log "Installing Java I2P and its keyring package..."
-apt-get update
-apt-get install -y i2p i2p-keyring
+  log "Installing Java I2P and its keyring package..."
+  apt-get update
+  apt-get install -y i2p i2p-keyring
+else
+  log "Adding the official I2P Ubuntu PPA..."
+  add-apt-repository --yes "$UBUNTU_PPA"
+  apt-get update
+
+  log "Installing Java I2P from the official Ubuntu PPA..."
+  apt-get install -y i2p
+fi
 
 log "Enabling the I2P system service..."
 if systemctl cat i2p.service >/dev/null 2>&1; then
