@@ -99,7 +99,6 @@ fi
 cat > "$NGINX_SITE" <<NGINX
 server {
     listen 127.0.0.1:8080;
-    listen [::1]:8080;
     server_name _;
     root $SITE_ROOT;
     index index.html;
