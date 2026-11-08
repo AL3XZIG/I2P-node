@@ -33,11 +33,18 @@ backup_path() {
   log "Backed up $source_path to $destination"
 }
 
-trap 'rc=$?; warn "Installation stopped (exit code: $rc). See the message above."; exit "$rc"' ERR
+on_error() {
+  local rc=$?
+  warn "Installation stopped (exit code: $rc). See the message above."
+  exit "$rc"
+}
+trap on_error ERR
 
 [[ "$EUID" -eq 0 ]] || die "Run as root: sudo bash install.sh"
 [[ -r /etc/os-release ]] || die "Cannot identify operating system."
 
+# This file is provided by the operating system and checked above.
+# shellcheck disable=SC1091
 . /etc/os-release
 
 case "${ID:-}" in
