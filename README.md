@@ -1,6 +1,6 @@
 # I2P-node
 
-A small bootstrap installer for running a Java I2P router on Debian or Ubuntu VPS instances, with a local website origin for an I2P Eepsite.
+A bootstrap installer for running a Java I2P router on Debian or Ubuntu VPS instances, with a local Nginx website origin for an I2P Eepsite.
 
 ## Supported systems
 
@@ -12,7 +12,28 @@ A small bootstrap installer for running a Java I2P router on Debian or Ubuntu VP
 - systemd
 - Root or sudo access
 
-Other distributions and releases are intentionally rejected for now.
+Other distributions and releases are intentionally rejected.
+
+## Important: intended server environment
+
+**Use this installer on a fresh VPS or a server dedicated to I2P-node. Do not run it blindly on a shared, existing production server.**
+
+The installer changes system-level configuration and installs/enables services. In particular, it:
+
+- Adds or changes APT repository configuration (Debian repository or Ubuntu I2P PPA).
+- Installs Java I2P, Nginx, and prerequisite packages.
+- Enables and starts the I2P and Nginx systemd services.
+- Creates or replaces the Nginx vhost at `/etc/nginx/sites-available/i2p-site`.
+- Enables the I2P site and, after a separate confirmation, disables `/etc/nginx/sites-enabled/default`.
+- Does not modify firewall rules or expose the I2P Router Console.
+
+Before making these changes, it stores copies of existing APT source-list configuration, the I2P repository keyring if present, and the existing `/etc/nginx` tree in a timestamped directory under:
+
+```
+/root/i2p-node-backups/
+```
+
+Backups are created with root-only permissions. The installer **does not provide an automatic rollback**. If installation fails or you need to restore a previous configuration, inspect the backup and restore the relevant files manually. Do not blindly overwrite the entire configuration tree on a running server.
 
 ## Install
 
@@ -26,18 +47,16 @@ cd I2P-node
 sudo bash install.sh
 ```
 
-The installer asks for confirmation, then:
+The installer asks for confirmation before making changes. It detects Debian or Ubuntu and selects the corresponding I2P package source:
 
-1. Installs prerequisite packages.
-2. Detects Debian or Ubuntu and selects the official I2P package source.
-3. On Debian, downloads the official I2P APT signing key, verifies its full fingerprint, and adds `deb.i2p.net`.
-4. On Ubuntu, adds the official `ppa:i2p-maintainers/i2p` PPA.
-5. Installs Java I2P (and `i2p-keyring` on Debian).
-6. Enables and starts the I2P system service when the package provides that unit.
-7. Installs Nginx and prepares a sample website at `/var/www/i2p-site`.
-8. Binds the website origin only to `127.0.0.1:8080`.
+1. Debian: downloads the official I2P APT signing key, verifies its full fingerprint, and adds `deb.i2p.net`.
+2. Ubuntu: adds the official `ppa:i2p-maintainers/i2p` PPA.
+3. Installs Java I2P (and `i2p-keyring` on Debian).
+4. Enables and starts the I2P system service, then verifies that it is active. Installation stops if the service is missing or fails to start.
+5. Installs Nginx and prepares a sample website at `/var/www/i2p-site`.
+6. Binds the website origin only to `127.0.0.1:8080`.
 
-The installer does **not** change firewall rules, expose the Router Console, or force the router to become Floodfill.
+When the Nginx default site is enabled, the installer prints a warning, identifies the backup location, and asks for separate confirmation before disabling it.
 
 ## After installation
 
@@ -86,9 +105,18 @@ After the router starts, find its configured transport port in **Router Console 
 
 Floodfill is a role assigned automatically by the I2P network based on router conditions and network needs. This installer does not and cannot guarantee or force Floodfill status. Keep the router online, reachable, updated, and adequately provisioned, then verify its status in the Router Console.
 
-## Uninstall notes
+## Uninstall and recovery notes
 
-The installer does not provide an automatic destructive uninstall. To remove components, review the services and files first; do not delete I2P router identity/key material unless you intentionally want to discard that router identity.
+There is no automatic uninstall or rollback. Review the services and files before removing components. Do not delete I2P router identity/key material unless you intentionally want to discard that router identity. Configuration backups are stored in `/root/i2p-node-backups/`.
+
+## Checks
+
+The repository includes GitHub Actions checks for Bash syntax and ShellCheck:
+
+```bash
+bash -n install.sh
+shellcheck install.sh
+```
 
 ## Official references
 
