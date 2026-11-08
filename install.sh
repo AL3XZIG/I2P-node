@@ -72,7 +72,7 @@ fi
 if [[ "$DISTRO_FAMILY" == "debian" ]]; then
   log "Downloading and verifying the official I2P repository key..."
   tmp_key="$(mktemp)"
-  trap 'rm -f "${tmp_key:-}"; rc=$?; if [[ $rc -ne 0 ]]; then warn "Installation stopped (exit code: $rc). See the message above."; fi; exit "$rc"' EXIT
+  trap 'rm -f "${tmp_key:-}"' EXIT
   curl --fail --silent --show-error --location "$KEY_URL" -o "$tmp_key"
 
   actual_fingerprint="$(gpg --batch --show-keys --with-colons "$tmp_key" | awk -F: '$1 == "fpr" {print toupper($10); exit}')"
