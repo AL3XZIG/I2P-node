@@ -18,7 +18,7 @@ log()  { printf '\033[1;32m[+]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m[ERROR]\033[0m %s\n' "$*" >&2; exit 1; }
 
-trap 'rc=$?; echo; warn "Installation stopped (exit code: $rc). See the message above."; exit "$rc"' ERR
+trap 'rc=$?; warn "Installation stopped (exit code: $rc). See the message above."; exit "$rc"' ERR
 
 [[ "${EUID}" -eq 0 ]] || die "Run as root: sudo bash install.sh"
 [[ -r /etc/os-release ]] || die "Cannot identify operating system."
@@ -49,7 +49,7 @@ apt-get install -y --no-install-recommends ca-certificates curl gnupg nginx
 
 log "Downloading and verifying the official I2P repository key..."
 tmp_key="$(mktemp)"
-trap 'rm -f "$tmp_key"; rc=$?; if [[ $rc -ne 0 ]]; then warn "Installation stopped (exit code: $rc)."; fi; exit "$rc"' ERR
+trap 'rm -f "${tmp_key:-}"' EXIT
 curl --fail --silent --show-error --location "$KEY_URL" -o "$tmp_key"
 
 actual_fingerprint="$(gpg --batch --show-keys --with-colons "$tmp_key" | awk -F: '$1 == "fpr" {print toupper($10); exit}')"
@@ -57,7 +57,7 @@ actual_fingerprint="$(gpg --batch --show-keys --with-colons "$tmp_key" | awk -F:
 
 install -o root -g root -m 0644 "$tmp_key" "$KEYRING"
 rm -f "$tmp_key"
-trap - ERR
+trap - EXIT
 
 log "Adding the official I2P APT repository..."
 printf 'deb [signed-by=%s] %s %s main\n' "$KEYRING" "$REPO_URL" "$VERSION_CODENAME" > "$REPO_FILE"
