@@ -2,7 +2,8 @@
 set -Eeuo pipefail
 
 # I2P-node bootstrap installer for Debian 12/13 and Ubuntu 22.04/24.04/26.04.
-# Installs official Java I2P, systemd service, and a local Nginx origin for an Eepsite.
+# Installs Java I2P, systemd service, and a local Nginx origin for an Eepsite.
+# Intended for a fresh or dedicated VPS. Review README.md before running.
 # It does NOT expose Router Console or open firewall ports automatically.
 
 readonly KEY_URL="https://i2p.net/i2p-archive-keyring.gpg"
@@ -13,14 +14,28 @@ readonly KEYRING="/usr/share/keyrings/i2p-archive-keyring.gpg"
 readonly REPO_FILE="/etc/apt/sources.list.d/i2p.list"
 readonly SITE_ROOT="/var/www/i2p-site"
 readonly NGINX_SITE="/etc/nginx/sites-available/i2p-site"
+readonly BACKUP_BASE="/root/i2p-node-backups"
 
 log()  { printf '\033[1;32m[+]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m[ERROR]\033[0m %s\n' "$*" >&2; exit 1; }
 
+backup_path() {
+  local source_path="$1"
+  local relative_path="${source_path#/}"
+  local destination="${BACKUP_DIR}/${relative_path}"
+
+  [[ -e "$source_path" || -L "$source_path" ]] || return 0
+  [[ -e "$destination" || -L "$destination" ]] && return 0
+
+  mkdir -p "$(dirname "$destination")"
+  cp -a -- "$source_path" "$destination"
+  log "Backed up $source_path to $destination"
+}
+
 trap 'rc=$?; warn "Installation stopped (exit code: $rc). See the message above."; exit "$rc"' ERR
 
-[[ "${EUID}" -eq 0 ]] || die "Run as root: sudo bash install.sh"
+[[ "$EUID" -eq 0 ]] || die "Run as root: sudo bash install.sh"
 [[ -r /etc/os-release ]] || die "Cannot identify operating system."
 
 . /etc/os-release
@@ -45,6 +60,8 @@ esac
 
 command -v systemctl >/dev/null 2>&1 || die "systemd is required."
 command -v apt-get >/dev/null 2>&1 || die "APT is required."
+command -v cp >/dev/null 2>&1 || die "cp is required."
+command -v mktemp >/dev/null 2>&1 || die "mktemp is required."
 
 echo "I2P-node installer"
 echo "OS: ${PRETTY_NAME:-${ID} ${VERSION_ID}}"
@@ -53,11 +70,25 @@ if [[ "$DISTRO_FAMILY" == "debian" ]]; then
 else
   echo "I2P source: official Ubuntu PPA ($UBUNTU_PPA)"
 fi
-echo "Will install: official Java I2P, Nginx, and a local Eepsite web root."
+echo "Will install: Java I2P, Nginx, and a local Eepsite web root."
+echo "Will modify APT sources, systemd services, and Nginx configuration."
+echo "Existing configuration backups will be stored under $BACKUP_BASE."
 echo "Will NOT: open public firewall ports, expose Router Console, or force Floodfill."
 echo
+warn "This installer is intended for a fresh or dedicated VPS, not a shared production server."
+warn "It will disable the Nginx default site after backing up the existing Nginx configuration."
 read -r -p "Continue? [y/N] " answer
 [[ "$answer" =~ ^[Yy]([Ee][Ss])?$ ]] || { echo "Cancelled."; exit 0; }
+
+# Back up existing configuration before installing packages or changing APT/Nginx.
+install -d -o root -g root -m 0700 "$BACKUP_BASE"
+BACKUP_DIR="$(mktemp -d "$BACKUP_BASE/backup-$(date +%Y%m%d-%H%M%S)-XXXXXX")"
+chmod 0700 "$BACKUP_DIR"
+backup_path "/etc/apt/sources.list.d"
+backup_path "$KEYRING"
+backup_path "/etc/nginx"
+
+log "Configuration backup directory: $BACKUP_DIR"
 
 export DEBIAN_FRONTEND=noninteractive
 
@@ -72,17 +103,19 @@ fi
 if [[ "$DISTRO_FAMILY" == "debian" ]]; then
   log "Downloading and verifying the official I2P repository key..."
   tmp_key="$(mktemp)"
-  trap 'rm -f "${tmp_key:-}"' EXIT
+  trap 'rm -f "$tmp_key"' EXIT
   curl --fail --silent --show-error --location "$KEY_URL" -o "$tmp_key"
 
   actual_fingerprint="$(gpg --batch --show-keys --with-colons "$tmp_key" | awk -F: '$1 == "fpr" {print toupper($10); exit}')"
   [[ "$actual_fingerprint" == "$KEY_FINGERPRINT" ]] || die "I2P signing-key fingerprint mismatch. Expected $KEY_FINGERPRINT, got ${actual_fingerprint:-none}. Refusing to continue."
 
+  backup_path "$KEYRING"
   install -o root -g root -m 0644 "$tmp_key" "$KEYRING"
   rm -f "$tmp_key"
   trap - EXIT
 
   log "Adding the official I2P APT repository..."
+  backup_path "$REPO_FILE"
   printf 'deb [signed-by=%s] %s %s main\n' "$KEYRING" "$REPO_URL" "$VERSION_CODENAME" > "$REPO_FILE"
 
   log "Installing Java I2P and its keyring package..."
@@ -99,12 +132,15 @@ fi
 
 log "Enabling the I2P system service..."
 if systemctl cat i2p.service >/dev/null 2>&1; then
-  systemctl enable --now i2p.service
+  I2P_SERVICE="i2p.service"
 elif systemctl cat i2p >/dev/null 2>&1; then
-  systemctl enable --now i2p
+  I2P_SERVICE="i2p"
 else
-  warn "I2P systemd unit was not found. Run 'sudo dpkg-reconfigure i2p' and enable the system service, then start it."
+  die "I2P systemd unit was not found. Check the package installation and service setup."
 fi
+
+systemctl enable --now "$I2P_SERVICE"
+systemctl is-active --quiet "$I2P_SERVICE" || die "I2P failed to start ($I2P_SERVICE). Check: journalctl -u $I2P_SERVICE -e"
 
 log "Preparing a private local website origin for an I2P Eepsite..."
 install -d -o www-data -g www-data -m 0755 "$SITE_ROOT"
@@ -127,6 +163,13 @@ HTML
   chown www-data:www-data "$SITE_ROOT/index.html"
 fi
 
+# Preserve the package-generated default site too if Nginx was installed just now.
+backup_path "/etc/nginx/sites-enabled/default"
+backup_path "/etc/nginx/sites-available/default"
+
+# Back up our target vhost explicitly before replacing it.
+backup_path "$NGINX_SITE"
+
 cat > "$NGINX_SITE" <<NGINX
 server {
     listen 127.0.0.1:8080;
@@ -144,8 +187,17 @@ server {
 NGINX
 
 ln -sfn "$NGINX_SITE" /etc/nginx/sites-enabled/i2p-site
-# Disable the package default vhost so Nginx does not expose a public port 80 page.
-rm -f /etc/nginx/sites-enabled/default
+
+if [[ -e /etc/nginx/sites-enabled/default || -L /etc/nginx/sites-enabled/default ]]; then
+  warn "The Nginx default site is enabled and will be disabled."
+  warn "Its configuration and symlink have been backed up under: $BACKUP_DIR/etc/nginx/"
+  read -r -p "Disable /etc/nginx/sites-enabled/default? [y/N] " disable_default
+  [[ "$disable_default" =~ ^[Yy]([Ee][Ss])?$ ]] || die "Refusing to disable the Nginx default site. Review changes and backup at $BACKUP_DIR."
+  rm -f /etc/nginx/sites-enabled/default
+else
+  log "Nginx default site is already disabled or absent."
+fi
+
 nginx -t
 systemctl enable --now nginx
 systemctl reload nginx
@@ -155,8 +207,9 @@ curl --fail --silent http://127.0.0.1:8080/ >/dev/null || die "Nginx did not ser
 
 echo
 log "Installation finished."
-echo "I2P service:   systemctl status i2p"
-echo "I2P logs:      journalctl -u i2p -f"
+echo "Configuration backups: $BACKUP_DIR"
+echo "I2P service:   systemctl status $I2P_SERVICE"
+echo "I2P logs:      journalctl -u $I2P_SERVICE -f"
 echo "Nginx status:  systemctl status nginx"
 echo "Local website: http://127.0.0.1:8080/"
 echo
@@ -166,3 +219,4 @@ echo "2. In Hidden Services Manager, create an HTTP Server Tunnel to 127.0.0.1:8
 echo "3. Keep Router Console (7657) bound to localhost; do not publish it."
 echo "4. Open the I2P transport port shown in Router Console in the VPS provider firewall and host firewall."
 echo "5. Floodfill is assigned by I2P automatically; this installer cannot force that role."
+echo "6. No automatic rollback is provided. Review $BACKUP_DIR before restoring configuration."
