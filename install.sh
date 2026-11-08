@@ -113,6 +113,8 @@ server {
 NGINX
 
 ln -sfn "$NGINX_SITE" /etc/nginx/sites-enabled/i2p-site
+# Disable the package default vhost so Nginx does not expose a public port 80 page.
+rm -f /etc/nginx/sites-enabled/default
 nginx -t
 systemctl enable --now nginx
 systemctl reload nginx
